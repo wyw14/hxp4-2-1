@@ -8,10 +8,32 @@ const api = axios.create({
   timeout: 5000,
 });
 
-export async function createGame(level: number = 1, gridRadius?: number): Promise<GameState> {
-  const response = await api.post<ApiResponse<GameState>>('/games', { level, gridRadius });
+export async function createGame(level: number = 1, gridRadius?: number, seed?: number): Promise<GameState> {
+  const response = await api.post<ApiResponse<GameState>>('/games', { level, gridRadius, seed });
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.error || '创建游戏失败');
+  }
+  return response.data.data;
+}
+
+export async function createGameFromShareCode(shareCode: string): Promise<GameState> {
+  const response = await api.post<ApiResponse<GameState>>('/games/from-share-code', { shareCode });
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '分享码无效');
+  }
+  return response.data.data;
+}
+
+export interface ShareCodeInfo {
+  shareCode: string;
+  seed: number;
+  level: number;
+}
+
+export async function getShareCode(gameId: string): Promise<ShareCodeInfo> {
+  const response = await api.get<ApiResponse<ShareCodeInfo>>(`/games/${gameId}/share-code`);
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error || '获取分享码失败');
   }
   return response.data.data;
 }

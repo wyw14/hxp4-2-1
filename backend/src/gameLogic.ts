@@ -10,22 +10,73 @@ const LEVEL_CONFIGS: Record<number, { radius: number; nutrients: number; pollute
   5: { radius: 6, nutrients: 6, polluted: 20 },
 };
 
-function pickRandom<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+class SeededRandom {
+  private state: number;
+
+  constructor(seed: number) {
+    this.state = seed >>> 0;
+  }
+
+  next(): number {
+    this.state = (this.state + 0x6D2B79F5) >>> 0;
+    let t = this.state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  nextInt(min: number, max: number): number {
+    return Math.floor(this.next() * (max - min + 1)) + min;
+  }
 }
 
-function shuffle<T>(arr: T[]): T[] {
+function createSeededRandom(seed?: number): { rng: SeededRandom; seed: number } {
+  const actualSeed = seed ?? Math.floor(Math.random() * 4294967295);
+  return { rng: new SeededRandom(actualSeed), seed: actualSeed };
+}
+
+function pickRandomSeeded<T>(arr: T[], rng: SeededRandom): T {
+  return arr[Math.floor(rng.next() * arr.length)];
+}
+
+function shuffleSeeded<T>(arr: T[], rng: SeededRandom): T[] {
   const result = [...arr];
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng.next() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;
 }
 
-export function createNewGame(level: number = 1, customRadius?: number): GameState {
+export function generateShareCode(level: number, seed: number, gridRadius: number): string {
+  const data = { l: level, s: seed, r: gridRadius };
+  const json = JSON.stringify(data);
+  const buf = Buffer.from(json, 'utf-8');
+  return buf.toString('base64url');
+}
+
+export function parseShareCode(shareCode: string): { level: number; seed: number; gridRadius: number } | null {
+  try {
+    const buf = Buffer.from(shareCode, 'base64url');
+    const json = buf.toString('utf-8');
+    const data = JSON.parse(json);
+    if (
+      typeof data.l === 'number' &&
+      typeof data.s === 'number' &&
+      typeof data.r === 'number'
+    ) {
+      return { level: data.l, seed: data.s, gridRadius: data.r };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function createNewGame(level: number = 1, customRadius?: number, seed?: number): GameState {
   const config = LEVEL_CONFIGS[level] || LEVEL_CONFIGS[5];
   const radius = customRadius ?? config.radius;
+  const { rng, seed: actualSeed } = createSeededRandom(seed);
 
   const allCoords = generateHexGrid(radius);
   const cells: Record<string, HexCell> = {};
@@ -36,8 +87,9 @@ export function createNewGame(level: number = 1, customRadius?: number): GameSta
   const startCoord: HexCoord = { q: 0, r: 0 };
   cells[coordKey(startCoord)].type = HexType.START;
 
-  const availableForPlacement = shuffle(
-    allCoords.filter((c) => hexDistance(c, startCoord) >= 2)
+  const availableForPlacement = shuffleSeeded(
+    allCoords.filter((c) => hexDistance(c, startCoord) >= 2),
+    rng
   );
 
   const nutrients: string[] = [];
@@ -71,6 +123,7 @@ export function createNewGame(level: number = 1, customRadius?: number): GameSta
     id: uuidv4(),
     level,
     gridRadius: radius,
+    seed: actualSeed,
     cells,
     nutrients,
     connectedNutrients: [],

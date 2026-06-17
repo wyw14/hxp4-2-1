@@ -21,6 +21,7 @@ export interface GameState {
   id: string;
   level: number;
   gridRadius: number;
+  seed: number;
   cells: Record<string, HexCell>;
   nutrients: string[];
   connectedNutrients: string[];
@@ -36,6 +37,11 @@ export interface GameState {
 export interface CreateGameRequest {
   level?: number;
   gridRadius?: number;
+  seed?: number;
+}
+
+export interface CreateFromShareCodeRequest {
+  shareCode: string;
 }
 
 export interface ExtendMyceliumRequest {

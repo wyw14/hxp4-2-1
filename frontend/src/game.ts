@@ -1,7 +1,7 @@
 import './styles.css';
 import { GameState, HexCoord, HexType } from './types';
 import { HexGridRenderer } from './hexGrid';
-import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath } from './api';
+import { createGame, getGame, extendMycelium, undoMove, resetGame, findPath, createGameFromShareCode, getShareCode, ShareCodeInfo } from './api';
 import { coordKey, findPathAStar, PixelCoord } from './hexUtils';
 
 type MessageType = 'info' | 'success' | 'error';
@@ -21,6 +21,9 @@ export class FungiGame {
   private messageTimeout: any = null;
   private isProcessing = false;
   private previewPathCoord: HexCoord | null = null;
+  private customSeedInput = '';
+  private shareCodeInput = '';
+  private currentShareCode: string | null = null;
 
   constructor() {
     const hexContainer = document.getElementById('hex-container')!;
@@ -57,6 +60,9 @@ export class FungiGame {
 
     const levelSection = this.createLevelSection();
     this.ui.panelContainer.appendChild(levelSection);
+
+    const seedSection = this.createSeedSection();
+    this.ui.panelContainer.appendChild(seedSection);
 
     if (this.message) {
       const msgBox = document.createElement('div');
@@ -100,6 +106,120 @@ export class FungiGame {
     }
 
     section.appendChild(levelSelector);
+    return section;
+  }
+
+  private createSeedSection(): HTMLElement {
+    const section = document.createElement('div');
+    section.innerHTML = `<div class="section-title">地图种子 / 分享码</div>`;
+
+    const container = document.createElement('div');
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '10px';
+
+    const seedRow = document.createElement('div');
+    seedRow.style.display = 'flex';
+    seedRow.style.gap = '8px';
+
+    const seedInput = document.createElement('input');
+    seedInput.type = 'text';
+    seedInput.placeholder = '输入种子数字（留空随机）';
+    seedInput.value = this.customSeedInput;
+    seedInput.style.flex = '1';
+    seedInput.style.padding = '8px 12px';
+    seedInput.style.border = '1px solid #3a3a5a';
+    seedInput.style.borderRadius = '8px';
+    seedInput.style.background = '#1a1a2e';
+    seedInput.style.color = '#e0e0f0';
+    seedInput.style.fontSize = '13px';
+    seedInput.oninput = (e) => {
+      this.customSeedInput = (e.target as HTMLInputElement).value;
+    };
+
+    const seedBtn = document.createElement('button');
+    seedBtn.className = 'btn btn-secondary';
+    seedBtn.textContent = '🎯 按种子创建';
+    seedBtn.style.padding = '8px 12px';
+    seedBtn.style.whiteSpace = 'nowrap';
+    seedBtn.onclick = () => {
+      const seed = this.customSeedInput.trim() ? parseInt(this.customSeedInput.trim(), 10) : undefined;
+      if (this.customSeedInput.trim() && isNaN(seed!)) {
+        this.showMessage('种子必须是有效的数字', 'error');
+        return;
+      }
+      this.startNewGame(this.selectedLevel, seed);
+    };
+
+    seedRow.appendChild(seedInput);
+    seedRow.appendChild(seedBtn);
+    container.appendChild(seedRow);
+
+    const shareRow = document.createElement('div');
+    shareRow.style.display = 'flex';
+    shareRow.style.gap = '8px';
+
+    const shareInput = document.createElement('input');
+    shareInput.type = 'text';
+    shareInput.placeholder = '粘贴分享码挑战同一张地图';
+    shareInput.value = this.shareCodeInput;
+    shareInput.style.flex = '1';
+    shareInput.style.padding = '8px 12px';
+    shareInput.style.border = '1px solid #3a3a5a';
+    shareInput.style.borderRadius = '8px';
+    shareInput.style.background = '#1a1a2e';
+    shareInput.style.color = '#e0e0f0';
+    shareInput.style.fontSize = '13px';
+    shareInput.oninput = (e) => {
+      this.shareCodeInput = (e.target as HTMLInputElement).value;
+    };
+
+    const shareBtn = document.createElement('button');
+    shareBtn.className = 'btn btn-primary';
+    shareBtn.textContent = '🔗 使用分享码';
+    shareBtn.style.padding = '8px 12px';
+    shareBtn.style.whiteSpace = 'nowrap';
+    shareBtn.onclick = () => {
+      const code = this.shareCodeInput.trim();
+      if (!code) {
+        this.showMessage('请输入分享码', 'error');
+        return;
+      }
+      this.startFromShareCode(code);
+    };
+
+    shareRow.appendChild(shareInput);
+    shareRow.appendChild(shareBtn);
+    container.appendChild(shareRow);
+
+    if (this.gameState) {
+      const seedInfo = document.createElement('div');
+      seedInfo.style.fontSize = '12px';
+      seedInfo.style.color = '#8a8a9a';
+      seedInfo.style.display = 'flex';
+      seedInfo.style.justifyContent = 'space-between';
+      seedInfo.style.alignItems = 'center';
+      seedInfo.style.padding = '6px 0';
+      seedInfo.innerHTML = `<span>🎲 当前种子: <strong style="color: #7ed957;">${this.gameState.seed}</strong></span>`;
+      
+      const copySeedBtn = document.createElement('button');
+      copySeedBtn.className = 'btn btn-secondary';
+      copySeedBtn.textContent = '📋 复制种子';
+      copySeedBtn.style.padding = '4px 8px';
+      copySeedBtn.style.fontSize = '11px';
+      copySeedBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(String(this.gameState!.seed));
+          this.showMessage('种子已复制到剪贴板', 'success');
+        } catch {
+          this.showMessage('复制失败，请手动复制', 'error');
+        }
+      };
+      seedInfo.appendChild(copySeedBtn);
+      container.appendChild(seedInfo);
+    }
+
+    section.appendChild(container);
     return section;
   }
 
@@ -222,7 +342,7 @@ export class FungiGame {
     return section;
   }
 
-  private showWinModal(): void {
+  private async showWinModal(): Promise<void> {
     if (document.querySelector('.win-modal')) return;
 
     const modal = document.createElement('div');
@@ -242,6 +362,19 @@ export class FungiGame {
       starText = '⭐⭐☆';
     }
 
+    let shareCodeInfo: ShareCodeInfo | null = null;
+    let shareCodeLoadError = false;
+    try {
+      shareCodeInfo = await getShareCode(this.gameState!.id);
+      this.currentShareCode = shareCodeInfo.shareCode;
+    } catch {
+      shareCodeLoadError = true;
+    }
+
+    const level = this.gameState!.level;
+    const seed = this.gameState!.seed;
+    const shareCode = shareCodeInfo?.shareCode || '';
+
     modal.innerHTML = `
       <div class="win-modal-content">
         <div class="win-title">🎉 连接成功！</div>
@@ -259,6 +392,31 @@ export class FungiGame {
         <div style="color: #8a8a9a; font-size: 13px; margin-bottom: 24px;">
           ${stars === 3 ? '完美！你找到了最优解！' : stars === 2 ? '表现不错，还能更优！' : '再接再厉，寻找更短的路径！'}
         </div>
+        
+        <div style="background: #1a1a2e; border: 1px solid #3a3a5a; border-radius: 10px; padding: 14px; margin-bottom: 20px;">
+          <div style="font-size: 13px; font-weight: 600; color: #7ed957; margin-bottom: 10px;">📤 分享这张地图给朋友挑战</div>
+          <div style="display: flex; gap: 8px;">
+            <input 
+              type="text" 
+              id="share-code-display" 
+              value="${shareCode}" 
+              readonly 
+              style="flex: 1; padding: 8px 12px; border: 1px solid #3a3a5a; border-radius: 8px; background: #0f0f1e; color: #e0e0f0; font-size: 12px; font-family: monospace;"
+            />
+            <button 
+              class="btn btn-primary" 
+              id="copy-share-btn" 
+              style="padding: 8px 14px; white-space: nowrap;"
+              ${shareCodeLoadError || !shareCode ? 'disabled' : ''}
+            >
+              📋 复制
+            </button>
+          </div>
+          <div style="font-size: 11px; color: #6a6a8a; margin-top: 8px;">
+            💡 种子: <strong style="color: #e0e0f0;">${seed}</strong> • 第 ${level} 关
+          </div>
+        </div>
+
         <div style="display: flex; gap: 10px; flex-direction: column;">
           ${this.selectedLevel < 5 ? `<button class="btn btn-primary" id="next-level-btn">🚀 下一关</button>` : ''}
           <button class="btn btn-secondary" id="replay-btn">🔄 再玩一次</button>
@@ -267,6 +425,25 @@ export class FungiGame {
     `;
 
     document.body.appendChild(modal);
+
+    const shareDisplay = modal.querySelector('#share-code-display') as HTMLInputElement;
+    const copyShareBtn = modal.querySelector('#copy-share-btn');
+    if (copyShareBtn && shareDisplay) {
+      copyShareBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(shareDisplay.value);
+          const origText = copyShareBtn.textContent;
+          copyShareBtn.textContent = '✅ 已复制';
+          setTimeout(() => { copyShareBtn.textContent = origText; }, 2000);
+        } catch {
+          shareDisplay.select();
+          document.execCommand('copy');
+          const origText = copyShareBtn.textContent;
+          copyShareBtn.textContent = '✅ 已复制';
+          setTimeout(() => { copyShareBtn.textContent = origText; }, 2000);
+        }
+      });
+    }
 
     const nextBtn = modal.querySelector('#next-level-btn');
     if (nextBtn) {
@@ -280,21 +457,39 @@ export class FungiGame {
     const replayBtn = modal.querySelector('#replay-btn')!;
     replayBtn.addEventListener('click', () => {
       document.body.removeChild(modal);
-      this.startNewGame(this.selectedLevel);
+      this.startNewGame(this.selectedLevel, this.gameState!.seed);
     });
   }
 
-  private async startNewGame(level: number): Promise<void> {
+  private async startNewGame(level: number, seed?: number): Promise<void> {
     this.setProcessing(true);
-    this.showMessage('正在生成新地图...', 'info');
+    this.showMessage(seed !== undefined ? `使用种子 ${seed} 生成地图...` : '正在生成新地图...', 'info');
 
     try {
-      this.gameState = await createGame(level);
+      this.gameState = await createGame(level, undefined, seed);
       this.hexGrid.setGameState(this.gameState);
-      this.showMessage(`第 ${level} 关开始！连接所有腐木营养源`, 'success');
+      this.showMessage(seed !== undefined ? `第 ${level} 关开始！种子: ${seed}` : `第 ${level} 关开始！连接所有腐木营养源`, 'success');
       this.renderPanel();
     } catch (e) {
       this.showMessage('创建游戏失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    } finally {
+      this.setProcessing(false);
+    }
+  }
+
+  private async startFromShareCode(shareCode: string): Promise<void> {
+    this.setProcessing(true);
+    this.showMessage('正在解析分享码...', 'info');
+
+    try {
+      this.gameState = await createGameFromShareCode(shareCode);
+      this.selectedLevel = this.gameState.level;
+      this.hexGrid.setGameState(this.gameState);
+      this.customSeedInput = String(this.gameState.seed);
+      this.showMessage(`🎮 挑战第 ${this.gameState.level} 关！种子: ${this.gameState.seed}`, 'success');
+      this.renderPanel();
+    } catch (e) {
+      this.showMessage('分享码无效：' + (e instanceof Error ? e.message : '未知错误'), 'error');
     } finally {
       this.setProcessing(false);
     }
@@ -411,7 +606,7 @@ export class FungiGame {
       this.gameState = await resetGame(this.gameState.id);
       this.hexGrid.setGameState(this.gameState);
       this.hexGrid.showPathPreview(null);
-      this.showMessage('🔄 关卡已重置', 'info');
+      this.showMessage('🔄 关卡已重置（相同地图）', 'info');
       this.renderPanel();
     } catch (e) {
       this.showMessage(e instanceof Error ? e.message : '重置失败', 'error');

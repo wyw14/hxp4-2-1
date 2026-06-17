@@ -21,6 +21,7 @@ export interface GameState {
   id: string;
   level: number;
   gridRadius: number;
+  seed: number;
   cells: Record<string, HexCell>;
   nutrients: string[];
   connectedNutrients: string[];

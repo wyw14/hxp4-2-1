@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { CreateGameRequest, ExtendMyceliumRequest, ApiResponse, HexCoord } from './types';
-import { createNewGame, extendMycelium, undoLastMove, findAutoPath } from './gameLogic';
+import { CreateGameRequest, ExtendMyceliumRequest, ApiResponse, HexCoord, CreateFromShareCodeRequest, GameState } from './types';
+import { createNewGame, extendMycelium, undoLastMove, findAutoPath, generateShareCode, parseShareCode } from './gameLogic';
 import { saveGame, loadGame, deleteGame, listGames } from './db';
 import { coordKey } from './hexUtils';
 
@@ -8,8 +8,8 @@ const router = Router();
 
 router.post('/games', (req, res) => {
   try {
-    const { level = 1, gridRadius } = req.body as CreateGameRequest;
-    const game = createNewGame(level, gridRadius);
+    const { level = 1, gridRadius, seed } = req.body as CreateGameRequest;
+    const game = createNewGame(level, gridRadius, seed);
     saveGame(game);
 
     const response: ApiResponse<typeof game> = {
@@ -26,19 +26,74 @@ router.post('/games', (req, res) => {
   }
 });
 
+router.post('/games/from-share-code', (req, res) => {
+  try {
+    const { shareCode } = req.body as CreateFromShareCodeRequest;
+    if (!shareCode || typeof shareCode !== 'string') {
+      const response: ApiResponse = { success: false, error: '分享码不能为空' };
+      return res.status(400).json(response);
+    }
+
+    const parsed = parseShareCode(shareCode);
+    if (!parsed) {
+      const response: ApiResponse = { success: false, error: '分享码格式无效' };
+      return res.status(400).json(response);
+    }
+
+    const game = createNewGame(parsed.level, parsed.gridRadius, parsed.seed);
+    saveGame(game);
+
+    const response: ApiResponse<typeof game> = {
+      success: true,
+      data: game,
+    };
+    res.json(response);
+  } catch (error) {
+    const response: ApiResponse = {
+      success: false,
+      error: error instanceof Error ? error.message : '通过分享码创建游戏失败',
+    };
+    res.status(500).json(response);
+  }
+});
+
+router.get('/games/:id/share-code', (req, res) => {
+  try {
+    const game = loadGame(req.params.id);
+    if (!game) {
+      const response: ApiResponse = { success: false, error: '游戏不存在' };
+      return res.status(404).json(response);
+    }
+
+    const shareCode = generateShareCode(game.level, game.seed, game.gridRadius);
+    const response: ApiResponse<{ shareCode: string; seed: number; level: number }> = {
+      success: true,
+      data: { shareCode, seed: game.seed, level: game.level },
+    };
+    res.json(response);
+  } catch (error) {
+    const response: ApiResponse = {
+      success: false,
+      error: error instanceof Error ? error.message : '获取分享码失败',
+    };
+    res.status(500).json(response);
+  }
+});
+
 router.get('/games', (req, res) => {
   try {
     const games = listGames();
-    const response: ApiResponse<typeof games> = {
+    const simplifiedGames = games.map((g) => ({
+      id: g.id,
+      level: g.level,
+      status: g.status,
+      steps: g.steps,
+      optimalSteps: g.optimalSteps,
+      updatedAt: g.updatedAt,
+    }));
+    const response: ApiResponse<typeof simplifiedGames> = {
       success: true,
-      data: games.map((g) => ({
-        id: g.id,
-        level: g.level,
-        status: g.status,
-        steps: g.steps,
-        optimalSteps: g.optimalSteps,
-        updatedAt: g.updatedAt,
-      })),
+      data: simplifiedGames,
     };
     res.json(response);
   } catch (error) {
@@ -85,9 +140,9 @@ router.post('/games/:id/extend', (req, res) => {
     const result = extendMycelium(game, coord);
     saveGame(result.game);
 
-    const response: ApiResponse = {
+    const response: ApiResponse<GameState> = {
       success: result.success,
-      data: result.game,
+      data: result.success ? result.game : undefined,
       error: result.success ? undefined : result.message,
     };
     res.json(response);
@@ -111,9 +166,9 @@ router.post('/games/:id/undo', (req, res) => {
     const result = undoLastMove(game);
     saveGame(result.game);
 
-    const response: ApiResponse = {
+    const response: ApiResponse<GameState> = {
       success: result.success,
-      data: result.game,
+      data: result.success ? result.game : undefined,
       error: result.success ? undefined : result.message,
     };
     res.json(response);
@@ -134,10 +189,11 @@ router.post('/games/:id/reset', (req, res) => {
       return res.status(404).json(response);
     }
 
-    const newGame = createNewGame(game.level, game.gridRadius);
+    const newGame = createNewGame(game.level, game.gridRadius, game.seed);
     saveGame({ ...newGame, id: game.id, createdAt: game.createdAt });
+    const savedGame = { ...newGame, id: game.id };
 
-    const response: ApiResponse = { success: true, data: { ...newGame, id: game.id } };
+    const response: ApiResponse<GameState> = { success: true, data: savedGame };
     res.json(response);
   } catch (error) {
     const response: ApiResponse = {
@@ -180,7 +236,7 @@ router.post('/games/:id/find-path', (req, res) => {
     }
 
     const path = findAutoPath(game, from, to);
-    const response: ApiResponse = {
+    const response: ApiResponse<HexCoord[]> = {
       success: path !== null,
       data: path || undefined,
       error: path === null ? '找不到可行路径' : undefined,
